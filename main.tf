@@ -55,7 +55,7 @@ resource "aws_iam_role_policy_attachment" "attach_policy_to_role" {
 
 # Optional: Instance Profile (to use with EC2)
 resource "aws_iam_instance_profile" "ec2_instance_profile" {
-    name = "ec2_s3_profile"
+    name = "ec2_s3_profile_v2"
     role = aws_iam_role.ec2_s3_role.name
   
 }
@@ -73,6 +73,36 @@ resource "aws_security_group" "allow_ssh" {
 }
 
 
+data "aws_route53_zone" "main" {
+zone_id = "Z05401762TI47FKGVMEFO"
+private_zone = false
+}
+
+resource "aws_route53_record" "root_redirect_bucket" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name = "ansarbro.com"
+  type = "A"
+  alias {
+    name = "s3-website-us-east-1.amazonaws.com"
+   evaluate_target_health = false
+   zone_id = "Z3AQBSTGFYJSTF"
+  }
+}
+
+resource "aws_route53_record" "www_record" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name = "www.ansarbro.com"
+  type = "A"
+ alias {
+   name = "s3-website-us-east-1.amazonaws.com"
+   zone_id = "Z3AQBSTGFYJSTF"
+   evaluate_target_health = false
+ }
+}
+
+# output "name_servers" {
+#   value = aws_route53_zone.main.name_servers
+# }
 
 
 
