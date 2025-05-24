@@ -1,3 +1,8 @@
 data.tf
 /home/akash-aj/Terraform/IAM/.terraform
 .terraform
+ansarbro-backend/.env
+ansarbro-backend/node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

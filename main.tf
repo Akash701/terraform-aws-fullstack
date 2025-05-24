@@ -33,7 +33,7 @@ resource "aws_iam_policy" "route53_policy" {
         "route53:GetHostedZone",
         "route53:ChangeResourceRecordSets",
         "route53:ListHostedZones",
-        "route53:ListResourceRecordSets"
+        "route53:ListResourceRecordSets" 
       ],
       "Resource": "*"
     }
@@ -89,24 +89,26 @@ resource "aws_iam_instance_profile" "ec2_instance_profile" {
 }
 
 
-resource "aws_instance" "ubuntu_server" {
-  iam_instance_profile = aws_iam_instance_profile.ec2_instance_profile.name
-  ami = data.aws_ssm_parameter.ubuntu_ami.value
-  instance_type = "t2.micro"
-  vpc_security_group_ids = [aws_security_group.allow_ssh.id]
 
-  tags = {
-    Name = "Ubuntu EC2 with S3 Access"
-  }
-}
 
 data "aws_vpc" "default"{
   default = true
 }
 
-resource "aws_security_group" "allow_ssh" {
- name = "allow_ssh"
- description = "Allow SSH"
+# data "aws_subnet_ids" "default"{
+# vpc_id = data.aws_vpc.default.id 
+# }
+
+data "aws_subnets" "default"{
+  filter{
+    name = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+resource "aws_security_group" "new_sg" {
+ name = "new-sg"
+ description = "Allow SSH and backend access"
  vpc_id = data.aws_vpc.default.id
 
  ingress{
@@ -125,6 +127,93 @@ resource "aws_security_group" "allow_ssh" {
 }
 
 
+resource "aws_instance" "ubuntu_server" {
+  iam_instance_profile = aws_iam_instance_profile.ec2_instance_profile.name
+  ami = data.aws_ssm_parameter.ubuntu_ami.value
+  instance_type = "t2.micro"
+  subnet_id = data.aws_subnets.default.ids[0]
+  vpc_security_group_ids = [aws_security_group.new_sg.id]
+
+  tags = {
+    Name = "Ubuntu EC2 with S3 Access"
+  }
+}
+
+resource "aws_security_group" "mysql_ec2_sg" {
+  name = "mysql-ec2-sg"
+  description = "Accept traffic only from EC2 SG"
+  vpc_id = data.aws_vpc.default.id
+
+  ingress{
+    from_port = 3306
+    to_port = 3306
+    protocol = "tcp"
+    security_groups = [aws_security_group.new_sg.id]
+  }
+
+  egress{
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_db_subnet_group" "default" {
+  name = "default-db-subnet"
+  subnet_ids = slice(data.aws_subnets.default.ids,0,2)
+
+  tags = {
+    Name = "My RDS Subnet Group"
+  }
+}
+
+
+resource "aws_db_instance" "mysql" {
+  allocated_storage = 20
+  engine = "mysql"
+  engine_version = "8.0"
+  instance_class = "db.t3.micro"
+  username = var.User_Name.value
+  password = var.password.value
+  db_subnet_group_name = aws_db_subnet_group.default.name
+  vpc_security_group_ids = [aws_security_group.mysql_ec2_sg.id]
+  skip_final_snapshot = true
+  publicly_accessible = false
+  deletion_protection = false 
+  multi_az = false 
+}
+
+data "aws_ami" "ubuntu"{
+most_recent = true 
+owners = ["099720109477"]
+
+filter {
+  name = "name"
+  values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
+}
+}
+
+resource "aws_instance" "node_backend" {
+  ami = data.aws_ami.ubuntu.id
+  instance_type = "t2.micro"
+  subnet_id = data.aws_subnets.default.ids[0]
+  vpc_security_group_ids = [aws_security_group.mysql_ec2_sg.id]
+  associate_public_ip_address = true
+
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update -y
+              apt-get install -y nodejs npm mysql-client
+              npm install -g pm2
+              EOF
+
+  tags = {
+    Name = "ansarbro-backend"
+  }
+}
+
+
 resource "aws_acm_certificate" "cert" {
   domain_name       = "ansarbro.com"
   validation_method = "DNS"
@@ -136,7 +225,6 @@ resource "aws_acm_certificate" "cert" {
 
 data "aws_route53_zone" "main" {
   name = "ansarbro.com"
-# zone_id = "Z05401762TI47FKGVMEFO"
 private_zone = false
 }
 
@@ -235,6 +323,13 @@ resource "aws_cloudfront_distribution" "cloudfront" {
 #   }
 # }
 
+output "rds_endpoint" {
+  value = aws_db_instance.mysql.endpoint
+}
+
+output "ec2_public_ip" {
+  value = aws_instance.node_backend.public_ip
+}
 
 output "cloudfront_url" {
   value = aws_cloudfront_distribution.cloudfront.domain_name
